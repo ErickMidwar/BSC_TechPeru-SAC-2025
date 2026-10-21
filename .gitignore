@@ -1,0 +1,25 @@
+# Dependencias Node
+backend/node_modules/
+
+# Base de datos SQLite (se genera automáticamente al iniciar)
+backend/data/
+
+# Archivos temporales de instalación
+backend/do-install.cmd
+backend/install.js
+
+# Variables de entorno (contiene secretos — no subir a producción)
+# Dejamos .env en el repo ya que tiene solo valores de demo
+# backend/.env
+
+# Logs
+*.log
+npm-debug.log*
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# VS Code / Kiro
+.vscode/
+.kiro/
