@@ -20,11 +20,13 @@
       <div class="brand brand-login"><span class="brand-mark">T</span><div><strong>TechPeru</strong><small>Balanced Scorecard</small></div></div>
       <h1>Bienvenido</h1>
       <p class="muted">Ingresa al espacio de gestión estratégica de TechPeru SAC.</p>
-      <form id="loginForm">
-        <label for="loginUser">Usuario</label>
-        <input id="loginUser" name="loginUser" autocomplete="username" placeholder="correo@techperu.com" required>
-        <label for="loginPass">Contraseña</label>
-        <input id="loginPass" name="loginPass" type="password" autocomplete="current-password" placeholder="••••••••" required>
+      <form id="loginForm" novalidate>
+        <label class="field" for="loginUser">Usuario
+          <input id="loginUser" name="loginUser" autocomplete="username" placeholder="correo@techperu.com" required>
+        </label>
+        <label class="field" for="loginPass">Contraseña
+          <input id="loginPass" name="loginPass" type="password" autocomplete="current-password" placeholder="••••••••" required>
+        </label>
         <p id="loginError" class="error-text hidden">Credenciales incorrectas.</p>
         <button class="btn primary full" type="submit">Ingresar al sistema <span>→</span></button>
       </form>

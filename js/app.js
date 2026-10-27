@@ -103,10 +103,15 @@ setUnauthorizedHandler(() => { showLogin(); toast("Sesión expirada. Vuelve a in
 setNavigation({ currentPage, navigate, renderPage, refreshNotifications });
 setFormsContext({ currentPage, navigate, renderPage, refreshNotifications });
 
-$("#loginForm").addEventListener("submit", async e => {
+$("#loginForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const email = $("#loginUser").value.trim();
-  const password = $("#loginPass").value;
+  const email = ($("#loginUser")?.value || "").trim();
+  const password = $("#loginPass")?.value || "";
+  if (!email || !password) {
+    $("#loginError").textContent = "Ingresa usuario y contraseña.";
+    $("#loginError").classList.remove("hidden");
+    return;
+  }
   try {
     const data = await POST("/auth/login", { email, password });
     if (!data) return;

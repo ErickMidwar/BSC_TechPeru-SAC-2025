@@ -2,7 +2,7 @@ import { $, $$, escapeHtml } from "./lib/dom.js";
 import { pageTitles, perspectives, compliance } from "./lib/constants.js";
 import { getUser, canEdit, canMeasure, canApprove, canAdmin } from "./lib/auth.js";
 import { GET, POST, PUT, DELETE } from "./lib/api.js";
-import { fmt, currency, today, perspectiveLabel, downloadCsv } from "./lib/format.js";
+import { fmt, currency, today, perspectiveLabel, downloadCsv, downloadBlob } from "./lib/format.js";
 import { toast, pageHead, metricCard, showModal, closeModal, field, selectField, validateForm, optionsPerspectives } from "./lib/ui.js";
 
 import {
@@ -667,18 +667,6 @@ async function exportTrabajadores() {
   toast("CSV de trabajadores descargado");
 }
 
-function downloadCsv(filename, rows) {
-  const content = rows.map(r => r.map(c => `"${String(c ?? "").replace(/"/g,'""')}"`).join(",")).join("\n");
-  downloadBlob(filename, "\ufeff" + content, "text/csv");
-}
-
-function downloadBlob(filename, content, mime = "text/plain") {
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([content], { type: mime }));
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
 
 
 
