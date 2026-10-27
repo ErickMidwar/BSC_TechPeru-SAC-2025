@@ -1,32 +1,35 @@
 "use strict";
 
 const db = require("../config/database");
-const { achievement } = require("./kpisController");
-
-function newId(kpi_id, periodo) { return `M-${kpi_id}-${periodo}`; }
-
-function audit(user, accion, entidad_id, detalle) {
-  db.prepare("INSERT INTO audit_log (id, usuario, accion, entidad, entidad_id, detalle) VALUES (?,?,?,?,?,?)")
-    .run(`AUD-${Date.now()}`, user || "Sistema", accion, "mediciones", entidad_id, detalle);
-}
+const { achievement } = require("../../shared/compliance");
+const { canApproveMeasurement } = require("../../shared/compliance");
+const { audit } = require("../utils/audit");
+const { newId } = require("../utils/ids");
+const { parse, medicionSchema } = require("../utils/validate");
 
 /**
- * After saving a measurement, update kpi.resultado_actual with the
- * latest measurement value (most recent period).
+ * Recalculate KPI resultado_actual from the latest *approved* measurement.
  */
 function recalcKpi(kpi_id) {
-  const latest = db.prepare(
-    "SELECT valor FROM mediciones WHERE kpi_id = ? ORDER BY periodo DESC, fecha DESC LIMIT 1"
-  ).get(kpi_id);
+  const latest = db.prepare(`
+    SELECT valor FROM mediciones
+    WHERE kpi_id = ? AND estado = 'aprobado'
+    ORDER BY periodo DESC, fecha DESC LIMIT 1
+  `).get(kpi_id);
 
-  if (latest) {
-    db.prepare("UPDATE kpis SET resultado_actual = ? WHERE id = ?").run(latest.valor, kpi_id);
-  }
+  db.prepare("UPDATE kpis SET resultado_actual = ? WHERE id = ?").run(
+    latest ? latest.valor : null,
+    kpi_id
+  );
 }
 
-// GET /api/mediciones
+function enrich(row) {
+  if (!row) return null;
+  return { ...row, cumplimiento: achievement(row, row.valor) };
+}
+
 exports.list = (req, res) => {
-  const { kpi_id, periodo, q } = req.query;
+  const { kpi_id, periodo, estado, q, year } = req.query;
   let sql = `
     SELECT m.*, k.nombre as kpi_nombre, k.perspectiva, k.unidad,
            k.meta, k.direccion, k.umbral_alerta, k.umbral_critico
@@ -36,8 +39,10 @@ exports.list = (req, res) => {
   `;
   const params = [];
 
-  if (kpi_id)  { sql += " AND m.kpi_id = ?";      params.push(kpi_id); }
-  if (periodo) { sql += " AND m.periodo = ?";      params.push(periodo); }
+  if (kpi_id) { sql += " AND m.kpi_id = ?"; params.push(kpi_id); }
+  if (periodo) { sql += " AND m.periodo = ?"; params.push(periodo); }
+  if (estado) { sql += " AND m.estado = ?"; params.push(estado); }
+  if (year) { sql += " AND m.periodo LIKE ?"; params.push(`${year}-%`); }
   if (q) {
     sql += " AND (k.nombre LIKE ? OR m.responsable LIKE ? OR m.notas LIKE ?)";
     const like = `%${q}%`;
@@ -45,14 +50,10 @@ exports.list = (req, res) => {
   }
   sql += " ORDER BY m.periodo DESC, m.fecha DESC";
 
-  const rows = db.prepare(sql).all(...params).map(m => {
-    const pct = achievement(m, m.valor);
-    return { ...m, cumplimiento: pct };
-  });
+  const rows = db.prepare(sql).all(...params).map(enrich);
   return res.json(rows);
 };
 
-// GET /api/mediciones/:id
 exports.getOne = (req, res) => {
   const row = db.prepare(`
     SELECT m.*, k.nombre as kpi_nombre, k.unidad, k.meta, k.direccion, k.umbral_alerta, k.umbral_critico
@@ -60,72 +61,114 @@ exports.getOne = (req, res) => {
     WHERE m.id = ?
   `).get(req.params.id);
   if (!row) return res.status(404).json({ error: "Medición no encontrada." });
-  return res.json({ ...row, cumplimiento: achievement(row, row.valor) });
+  return res.json(enrich(row));
 };
 
-// POST /api/mediciones
 exports.create = (req, res) => {
-  const { kpi_id, periodo, fecha, valor, responsable = "", notas = "" } = req.body || {};
-  if (!kpi_id || !periodo || !fecha || valor === undefined) {
-    return res.status(400).json({ error: "kpi_id, periodo, fecha y valor son requeridos." });
+  try {
+    const data = parse(medicionSchema, req.body || {});
+    const kpi = db.prepare("SELECT id FROM kpis WHERE id = ?").get(data.kpi_id);
+    if (!kpi) return res.status(404).json({ error: "KPI no encontrado." });
+
+    // Responsable creates as pendiente; editors may create as aprobado
+    let estado = data.estado || "pendiente";
+    if (!canApproveMeasurement(req.user?.rol) && estado === "aprobado") {
+      estado = "pendiente";
+    }
+    if (canApproveMeasurement(req.user?.rol) && !req.body?.estado) {
+      estado = "aprobado";
+    }
+
+    const existing = db.prepare(
+      "SELECT id FROM mediciones WHERE kpi_id = ? AND periodo = ?"
+    ).get(data.kpi_id, data.periodo);
+
+    let id;
+    if (existing) {
+      id = existing.id;
+      db.prepare(`
+        UPDATE mediciones SET fecha=?, valor=?, responsable=?, notas=?, estado=?
+        WHERE id=?
+      `).run(data.fecha, Number(data.valor), data.responsable, data.notas, estado, id);
+      audit(req.user?.nombre, "Edición", "mediciones", id, `Upsert medición ${data.kpi_id} ${data.periodo}`);
+    } else {
+      id = newId("med");
+      db.prepare(`
+        INSERT INTO mediciones (id, kpi_id, periodo, fecha, valor, responsable, notas, estado)
+        VALUES (?,?,?,?,?,?,?,?)
+      `).run(id, data.kpi_id, data.periodo, data.fecha, Number(data.valor), data.responsable, data.notas, estado);
+      audit(req.user?.nombre, "Creación", "mediciones", id, `Medición ${data.kpi_id} período ${data.periodo}: ${data.valor}`);
+    }
+
+    if (estado === "aprobado") recalcKpi(data.kpi_id);
+
+    const full = db.prepare(`
+      SELECT m.*, k.nombre as kpi_nombre, k.unidad, k.meta, k.direccion, k.umbral_alerta, k.umbral_critico
+      FROM mediciones m LEFT JOIN kpis k ON k.id = m.kpi_id WHERE m.id = ?
+    `).get(id);
+    return res.status(existing ? 200 : 201).json(enrich(full));
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message });
   }
-
-  const kpi = db.prepare("SELECT id FROM kpis WHERE id = ?").get(kpi_id);
-  if (!kpi) return res.status(404).json({ error: "KPI no encontrado." });
-
-  // Each kpi-periodo combination is unique; upsert via replace
-  const id = `M-${kpi_id}-${periodo}-${Date.now()}`;
-  db.prepare(`
-    INSERT INTO mediciones (id, kpi_id, periodo, fecha, valor, responsable, notas)
-    VALUES (?,?,?,?,?,?,?)
-  `).run(id, kpi_id, periodo, fecha, Number(valor), responsable, notas);
-
-  recalcKpi(kpi_id);
-  audit(req.user?.nombre, "Creación", id, `Medición ${kpi_id} período ${periodo}: ${valor}`);
-
-  const full = db.prepare(`
-    SELECT m.*, k.nombre as kpi_nombre, k.unidad, k.meta, k.direccion, k.umbral_alerta, k.umbral_critico
-    FROM mediciones m LEFT JOIN kpis k ON k.id = m.kpi_id WHERE m.id = ?
-  `).get(id);
-  return res.status(201).json({ ...full, cumplimiento: achievement(full, full.valor) });
 };
 
-// PUT /api/mediciones/:id
 exports.update = (req, res) => {
   const row = db.prepare("SELECT * FROM mediciones WHERE id = ?").get(req.params.id);
   if (!row) return res.status(404).json({ error: "Medición no encontrada." });
 
-  const { valor, periodo, fecha, responsable, notas } = req.body || {};
+  const { valor, periodo, fecha, responsable, notas, estado } = req.body || {};
+  let nextEstado = estado ?? row.estado;
+  if (estado && !canApproveMeasurement(req.user?.rol) && ["aprobado", "rechazado"].includes(estado)) {
+    return res.status(403).json({ error: "No puedes aprobar o rechazar mediciones." });
+  }
+
   db.prepare(`
     UPDATE mediciones SET
       valor       = COALESCE(?, valor),
       periodo     = COALESCE(?, periodo),
       fecha       = COALESCE(?, fecha),
       responsable = COALESCE(?, responsable),
-      notas       = COALESCE(?, notas)
+      notas       = COALESCE(?, notas),
+      estado      = ?
     WHERE id = ?
   `).run(
     valor !== undefined ? Number(valor) : null,
     periodo ?? null, fecha ?? null, responsable ?? null, notas ?? null,
+    nextEstado,
     req.params.id
   );
 
   recalcKpi(row.kpi_id);
-  audit(req.user?.nombre, "Edición", req.params.id, `Medición ${req.params.id} actualizada.`);
+  audit(req.user?.nombre, "Edición", "mediciones", req.params.id, `Medición ${req.params.id} actualizada.`);
 
   const updated = db.prepare(`
     SELECT m.*, k.nombre as kpi_nombre, k.unidad, k.meta, k.direccion, k.umbral_alerta, k.umbral_critico
     FROM mediciones m LEFT JOIN kpis k ON k.id = m.kpi_id WHERE m.id = ?
   `).get(req.params.id);
-  return res.json({ ...updated, cumplimiento: achievement(updated, updated.valor) });
+  return res.json(enrich(updated));
 };
 
-// DELETE /api/mediciones/:id
+exports.approve = (req, res) => {
+  const row = db.prepare("SELECT * FROM mediciones WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "Medición no encontrada." });
+
+  const estado = req.body?.estado === "rechazado" ? "rechazado" : "aprobado";
+  db.prepare("UPDATE mediciones SET estado = ? WHERE id = ?").run(estado, req.params.id);
+  recalcKpi(row.kpi_id);
+  audit(req.user?.nombre, estado === "aprobado" ? "Aprobación" : "Rechazo", "mediciones", req.params.id, `Medición ${estado}`);
+
+  const updated = db.prepare(`
+    SELECT m.*, k.nombre as kpi_nombre, k.unidad, k.meta, k.direccion, k.umbral_alerta, k.umbral_critico
+    FROM mediciones m LEFT JOIN kpis k ON k.id = m.kpi_id WHERE m.id = ?
+  `).get(req.params.id);
+  return res.json(enrich(updated));
+};
+
 exports.remove = (req, res) => {
   const row = db.prepare("SELECT * FROM mediciones WHERE id = ?").get(req.params.id);
   if (!row) return res.status(404).json({ error: "Medición no encontrada." });
   db.prepare("DELETE FROM mediciones WHERE id = ?").run(req.params.id);
   recalcKpi(row.kpi_id);
-  audit(req.user?.nombre, "Eliminación", req.params.id, `Medición eliminada del KPI ${row.kpi_id}.`);
+  audit(req.user?.nombre, "Eliminación", "mediciones", req.params.id, `Medición eliminada del KPI ${row.kpi_id}.`);
   return res.json({ message: "Medición eliminada." });
 };

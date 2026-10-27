@@ -7,11 +7,11 @@
 
 const { DatabaseSync } = require("node:sqlite");
 const path = require("path");
-const fs   = require("fs");
+const fs = require("fs");
 
 const DB_PATH = path.join(__dirname, "..", "data", "bsc.db");
+const SCHEMA_VERSION = 2;
 
-// Ensure data directory exists
 const dataDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -19,21 +19,14 @@ if (!fs.existsSync(dataDir)) {
 
 const _db = new DatabaseSync(DB_PATH);
 
-// ── Compatibility shim for better-sqlite3 API ─────────────────────────────────
-// node:sqlite uses positional ? params (same as better-sqlite3), but the
-// Statement object has slightly different method names. We wrap them here.
-
 function wrapStatement(raw) {
   return {
-    run(...args)  { return raw.run(...flatArgs(args)); },
-    get(...args)  { return raw.get(...flatArgs(args)); },
-    all(...args)  { return raw.all(...flatArgs(args)); },
+    run(...args) { return raw.run(...flatArgs(args)); },
+    get(...args) { return raw.get(...flatArgs(args)); },
+    all(...args) { return raw.all(...flatArgs(args)); },
   };
 }
 
-// better-sqlite3 allows calling .run(obj) for named params OR .run(...vals)
-// node:sqlite .run() accepts positional or named params via an object.
-// We normalise: if first arg is a plain object and there's only one arg, pass as named; else positional.
 function flatArgs(args) {
   if (args.length === 1 && args[0] !== null && typeof args[0] === "object" && !Array.isArray(args[0])) {
     return [args[0]];
@@ -42,26 +35,9 @@ function flatArgs(args) {
 }
 
 const db = {
-  /** Execute raw SQL (no params). */
-  exec(sql) {
-    _db.exec(sql);
-  },
-
-  /** Set a SQLite pragma. */
-  pragma(stmt) {
-    _db.exec(`PRAGMA ${stmt};`);
-  },
-
-  /** Prepare a statement and return a better-sqlite3-style object. */
-  prepare(sql) {
-    const raw = _db.prepare(sql);
-    return wrapStatement(raw);
-  },
-
-  /**
-   * Wrap a function in a transaction.
-   * Returns a function that, when called, executes fn inside BEGIN/COMMIT.
-   */
+  exec(sql) { _db.exec(sql); },
+  pragma(stmt) { _db.exec(`PRAGMA ${stmt};`); },
+  prepare(sql) { return wrapStatement(_db.prepare(sql)); },
   transaction(fn) {
     return (...args) => {
       _db.exec("BEGIN");
@@ -70,20 +46,34 @@ const db = {
         _db.exec("COMMIT");
         return result;
       } catch (e) {
-        try { _db.exec("ROLLBACK"); } catch (_) {}
+        try { _db.exec("ROLLBACK"); } catch (_) { /* ignore */ }
         throw e;
       }
     };
   },
 };
 
-// Enable pragmas
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
-// ── Schema ────────────────────────────────────────────────────────────────────
-function initSchema() {
+function dropAllTables() {
+  db.pragma("foreign_keys = OFF");
+  const tables = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+  ).all();
+  for (const t of tables) {
+    db.exec(`DROP TABLE IF EXISTS "${t.name}"`);
+  }
+  db.pragma("foreign_keys = ON");
+}
+
+function createSchema() {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS users (
       id          TEXT PRIMARY KEY,
       nombre      TEXT NOT NULL,
@@ -116,18 +106,26 @@ function initSchema() {
       perspectiva   TEXT NOT NULL,
       descripcion   TEXT NOT NULL DEFAULT '',
       responsable   TEXT NOT NULL DEFAULT '',
-      trabajador_id TEXT,
+      trabajador_id TEXT REFERENCES trabajadores(id) ON DELETE SET NULL,
       prioridad     TEXT NOT NULL DEFAULT 'Media',
       peso          REAL NOT NULL DEFAULT 100,
       estado        TEXT NOT NULL DEFAULT 'Activo',
       created_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS objetivo_relaciones (
+      id           TEXT PRIMARY KEY,
+      from_id      TEXT NOT NULL REFERENCES objetivos(id) ON DELETE CASCADE,
+      to_id        TEXT NOT NULL REFERENCES objetivos(id) ON DELETE CASCADE,
+      descripcion  TEXT NOT NULL DEFAULT '',
+      UNIQUE(from_id, to_id)
+    );
+
     CREATE TABLE IF NOT EXISTS kpis (
       id               TEXT PRIMARY KEY,
       nombre           TEXT NOT NULL,
       perspectiva      TEXT NOT NULL,
-      objetivo_id      TEXT NOT NULL,
+      objetivo_id      TEXT NOT NULL REFERENCES objetivos(id) ON DELETE RESTRICT,
       unidad           TEXT NOT NULL DEFAULT '%',
       formula          TEXT NOT NULL DEFAULT '',
       descripcion      TEXT NOT NULL DEFAULT '',
@@ -139,7 +137,7 @@ function initSchema() {
       rango_superior   REAL,
       frecuencia       TEXT NOT NULL DEFAULT 'Mensual',
       responsable      TEXT NOT NULL DEFAULT '',
-      trabajador_id    TEXT,
+      trabajador_id    TEXT REFERENCES trabajadores(id) ON DELETE SET NULL,
       area             TEXT NOT NULL DEFAULT '',
       peso             REAL NOT NULL DEFAULT 1,
       umbral_alerta    REAL NOT NULL DEFAULT 80,
@@ -150,13 +148,15 @@ function initSchema() {
 
     CREATE TABLE IF NOT EXISTS mediciones (
       id          TEXT PRIMARY KEY,
-      kpi_id      TEXT NOT NULL,
+      kpi_id      TEXT NOT NULL REFERENCES kpis(id) ON DELETE CASCADE,
       periodo     TEXT NOT NULL,
       fecha       TEXT NOT NULL,
       valor       REAL NOT NULL,
       responsable TEXT NOT NULL DEFAULT '',
       notas       TEXT NOT NULL DEFAULT '',
-      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      estado      TEXT NOT NULL DEFAULT 'aprobado',
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(kpi_id, periodo)
     );
 
     CREATE TABLE IF NOT EXISTS recursos (
@@ -174,10 +174,10 @@ function initSchema() {
     CREATE TABLE IF NOT EXISTS iniciativas (
       id            TEXT PRIMARY KEY,
       nombre        TEXT NOT NULL,
-      objetivo_id   TEXT NOT NULL,
-      kpi_id        TEXT,
+      objetivo_id   TEXT NOT NULL REFERENCES objetivos(id) ON DELETE RESTRICT,
+      kpi_id        TEXT REFERENCES kpis(id) ON DELETE SET NULL,
       responsable   TEXT NOT NULL DEFAULT '',
-      trabajador_id TEXT,
+      trabajador_id TEXT REFERENCES trabajadores(id) ON DELETE SET NULL,
       area          TEXT NOT NULL DEFAULT '',
       fecha_inicio  TEXT NOT NULL,
       fecha_fin     TEXT NOT NULL,
@@ -192,8 +192,8 @@ function initSchema() {
 
     CREATE TABLE IF NOT EXISTS recurso_asignaciones (
       id              TEXT PRIMARY KEY,
-      iniciativa_id   TEXT NOT NULL,
-      recurso_id      TEXT NOT NULL,
+      iniciativa_id   TEXT NOT NULL REFERENCES iniciativas(id) ON DELETE CASCADE,
+      recurso_id      TEXT NOT NULL REFERENCES recursos(id) ON DELETE CASCADE,
       monto_asignado  REAL NOT NULL DEFAULT 0,
       monto_ejecutado REAL NOT NULL DEFAULT 0,
       notas           TEXT NOT NULL DEFAULT '',
@@ -209,7 +209,36 @@ function initSchema() {
       entidad_id TEXT NOT NULL DEFAULT '',
       detalle    TEXT NOT NULL DEFAULT ''
     );
+
+    CREATE INDEX IF NOT EXISTS idx_kpis_objetivo ON kpis(objetivo_id);
+    CREATE INDEX IF NOT EXISTS idx_mediciones_kpi ON mediciones(kpi_id);
+    CREATE INDEX IF NOT EXISTS idx_mediciones_periodo ON mediciones(periodo);
+    CREATE INDEX IF NOT EXISTS idx_iniciativas_objetivo ON iniciativas(objetivo_id);
   `);
+
+  db.prepare(
+    "INSERT INTO schema_meta (key, value) VALUES ('version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+  ).run(String(SCHEMA_VERSION));
+}
+
+function initSchema() {
+  let current = 0;
+  try {
+    const row = db.prepare("SELECT value FROM schema_meta WHERE key = 'version'").get();
+    current = row ? Number(row.value) : 0;
+  } catch (_) {
+    current = 0;
+  }
+
+  if (current < SCHEMA_VERSION) {
+    if (current > 0) {
+      console.log(`⚙️  Migrando esquema SQLite v${current} → v${SCHEMA_VERSION} (recreación con FKs)…`);
+    }
+    dropAllTables();
+    createSchema();
+  } else {
+    createSchema();
+  }
 }
 
 initSchema();

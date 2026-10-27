@@ -3,32 +3,56 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BSC | Gestión estratégica</title>
+  <title>TechPeru SAC · BSC Gestión estratégica</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap">
   <link rel="stylesheet" href="css/styles.css">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" defer></script>
-  <script src="js/app.js" defer></script>
+  <script src="vendor/chart.umd.min.js"
+    integrity="sha384-NrKB+u6Ts6AtkIhwPixiKTzgSKNblyhlk0Sohlgar9UHUBzai/sgnNNWWd291xqt"
+    crossorigin="anonymous" defer></script>
+  <script src="shared/compliance.js" defer></script>
+  <script type="module" src="js/app.js"></script>
 </head>
 <body>
   <div id="loginView" class="login-wrap">
     <div class="login-card">
-      <div class="brand brand-login"><span class="brand-mark">B</span><div><strong>BSC</strong><small>Gestión estratégica</small></div></div>
-      <h1>Bienvenido</h1><p class="muted">Ingresa al espacio de gestión estratégica de tu organización.</p>
+      <div class="brand brand-login"><span class="brand-mark">T</span><div><strong>TechPeru</strong><small>Balanced Scorecard</small></div></div>
+      <h1>Bienvenido</h1>
+      <p class="muted">Ingresa al espacio de gestión estratégica de TechPeru SAC.</p>
       <form id="loginForm">
-        <label>Usuario<input id="loginUser" autocomplete="username" value="admin@techperu.com" required></label>
-        <label>Contraseña<input id="loginPass" type="password" autocomplete="current-password" value="admin123" required></label>
+        <label for="loginUser">Usuario</label>
+        <input id="loginUser" name="loginUser" autocomplete="username" placeholder="correo@techperu.com" required>
+        <label for="loginPass">Contraseña</label>
+        <input id="loginPass" name="loginPass" type="password" autocomplete="current-password" placeholder="••••••••" required>
         <p id="loginError" class="error-text hidden">Credenciales incorrectas.</p>
         <button class="btn primary full" type="submit">Ingresar al sistema <span>→</span></button>
       </form>
-      <div class="demo-note"><strong>Acceso de demostración</strong><br>admin@techperu.com / admin123<br>carlos.ruiz@techperu.com / BSC2026!<br>maria.torres@techperu.com / BSC2026!</div>
-      <small class="muted">Prototipo académico · Datos ficticios</small>
+      <div class="demo-note"><strong>Acceso de demostración</strong> (solo entorno local)<br>admin@techperu.com · admin123<br>carlos.ruiz@techperu.com · BSC2026!<br>maria.torres@techperu.com · BSC2026!</div>
+      <small class="muted">Prototipo académico · Datos ficticios · TechPeru SAC</small>
     </div>
-    <div class="login-art"><div class="art-orbit orbit1"></div><div class="art-orbit orbit2"></div><div class="art-content"><span class="eyebrow">ESTRATEGIA · MEDICIÓN · RESULTADOS</span><h2>Convierte la estrategia<br>en resultados medibles.</h2><p>Conecta objetivos, indicadores e iniciativas en un solo lugar.</p><div class="art-stats"><div><b>4</b><small>Perspectivas</small></div><div><b>360°</b><small>Visión estratégica</small></div><div><b>1</b><small>Equipo alineado</small></div></div></div></div>
+    <div class="login-art">
+      <div class="art-orbit orbit1"></div>
+      <div class="art-orbit orbit2"></div>
+      <div class="art-content">
+        <span class="eyebrow">TECHPERU SAC · ESTRATEGIA · MEDICIÓN</span>
+        <h2>Convierte la estrategia<br>en resultados medibles.</h2>
+        <p>Conecta objetivos, indicadores e iniciativas en un solo Balanced Scorecard.</p>
+      </div>
+    </div>
   </div>
 
   <div id="appView" class="app-shell hidden">
     <aside class="sidebar" id="sidebar">
-      <div class="brand"><span class="brand-mark">B</span><div><strong>BSC</strong><small>Strategic performance</small></div><button id="sidebarClose" class="icon-btn mobile-only" aria-label="Cerrar menú">×</button></div>
-      <div class="org-switch"><span class="org-icon">N</span><div><strong>Nova Comercial S.A.C.</strong><small>Organización demo</small></div><span class="chevron">⌄</span></div>
+      <div class="brand">
+        <span class="brand-mark">T</span>
+        <div><strong>TechPeru</strong><small>Strategic performance</small></div>
+        <button id="sidebarClose" class="icon-btn mobile-only" aria-label="Cerrar menú">×</button>
+      </div>
+      <div class="org-switch" title="Organización activa" role="status">
+        <span class="org-icon">TP</span>
+        <div><strong>TechPeru SAC</strong><small>Organización activa</small></div>
+      </div>
       <nav id="mainNav" aria-label="Navegación principal">
         <div class="nav-label">ESPACIO DE TRABAJO</div>
         <button class="nav-item active" data-page="dashboard"><span class="nav-icon">▦</span>Dashboard ejecutivo</button>
@@ -37,20 +61,61 @@
         <button class="nav-item" data-page="kpis"><span class="nav-icon">▥</span>Indicadores (KPI)</button>
         <button class="nav-item" data-page="mediciones"><span class="nav-icon">↗</span>Registro de resultados</button>
         <button class="nav-item" data-page="iniciativas"><span class="nav-icon">◈</span>Iniciativas estratégicas</button>
+        <button class="nav-item" data-page="trabajadores"><span class="nav-icon">♙</span>Trabajadores</button>
         <div class="nav-label">ANÁLISIS Y CONTROL</div>
         <button class="nav-item" data-page="reportes"><span class="nav-icon">▤</span>Reportes</button>
         <button class="nav-item" data-page="administracion"><span class="nav-icon">⚙</span>Administración</button>
       </nav>
-      <div class="sidebar-bottom"><div class="help-card"><span class="help-icon">?</span><div><strong>¿Necesitas ayuda?</strong><small>Consulta la guía del prototipo</small></div></div><div class="sidebar-user"><div class="avatar">AP</div><div class="user-meta"><strong id="sideUserName">Ana Pérez</strong><small id="sideUserRole">Administradora</small></div><button id="logoutBtn" class="logout" title="Cerrar sesión">↪</button></div></div>
+      <div class="sidebar-bottom">
+        <button type="button" id="helpCard" class="help-card">
+          <span class="help-icon">?</span>
+          <div><strong>¿Necesitas ayuda?</strong><small>Guía rápida del BSC</small></div>
+        </button>
+        <div class="sidebar-user">
+          <div class="avatar">AP</div>
+          <div class="user-meta"><strong id="sideUserName">Ana Pérez</strong><small id="sideUserRole">Administradora</small></div>
+          <button id="logoutBtn" class="logout" title="Cerrar sesión" aria-label="Cerrar sesión">↪</button>
+        </div>
+      </div>
     </aside>
     <div class="main-column">
-      <header class="topbar"><button id="menuToggle" class="icon-btn mobile-only" aria-label="Abrir menú">☰</button><div class="breadcrumb"><span>Nova Comercial</span><span class="crumb-sep">/</span><strong id="breadcrumbPage">Dashboard ejecutivo</strong></div><div class="top-actions"><label class="period-select">Período <select id="globalPeriod"><option>2026</option><option>2025</option></select></label><button id="notificationsBtn" class="icon-btn notification-btn" title="Notificaciones">♧<i id="notificationDot"></i></button><div class="top-profile"><div class="avatar small-avatar">AP</div><div><strong id="topUserName">Ana Pérez</strong><small id="topUserRole">Administradora</small></div><span class="chevron">⌄</span></div></div></header>
+      <header class="topbar">
+        <button id="menuToggle" class="icon-btn mobile-only" aria-label="Abrir menú">☰</button>
+        <div class="breadcrumb"><span>TechPeru</span><span class="crumb-sep">/</span><strong id="breadcrumbPage">Dashboard ejecutivo</strong></div>
+        <div class="top-actions">
+          <label class="period-select" for="globalPeriod">Período
+            <select id="globalPeriod">
+              <option value="2026">2026</option>
+              <option value="2025">2025</option>
+            </select>
+          </label>
+          <button id="notificationsBtn" class="icon-btn notification-btn" title="Notificaciones" aria-label="Ver alertas">
+            ♧<i id="notificationDot" aria-hidden="true"></i>
+          </button>
+          <div class="top-profile">
+            <div class="avatar small-avatar">AP</div>
+            <div><strong id="topUserName">Ana Pérez</strong><small id="topUserRole">Administradora</small></div>
+          </div>
+        </div>
+      </header>
       <main id="pageContent" tabindex="-1"></main>
-      <footer class="app-footer"><span>BSC · Gestión estratégica</span><span>Prototipo funcional de demostración · Datos ficticios</span></footer>
+      <footer class="app-footer">
+        <span>TechPeru SAC · Balanced Scorecard</span>
+        <span>Prototipo funcional · Datos ficticios</span>
+      </footer>
     </div>
   </div>
 
-  <div id="modalLayer" class="modal-layer hidden" role="presentation"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><header class="modal-header"><div><span class="eyebrow" id="modalEyebrow">FORMULARIO</span><h2 id="modalTitle">Nuevo registro</h2></div><button id="modalClose" class="icon-btn" aria-label="Cerrar">×</button></header><div id="modalBody" class="modal-body"></div><footer id="modalFooter" class="modal-footer"></footer></section></div>
+  <div id="modalLayer" class="modal-layer hidden" role="presentation">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header class="modal-header">
+        <div><span class="eyebrow" id="modalEyebrow">FORMULARIO</span><h2 id="modalTitle">Nuevo registro</h2></div>
+        <button id="modalClose" class="icon-btn" aria-label="Cerrar">×</button>
+      </header>
+      <div id="modalBody" class="modal-body"></div>
+      <footer id="modalFooter" class="modal-footer"></footer>
+    </section>
+  </div>
   <div id="toastRegion" class="toast-region" aria-live="polite"></div>
 </body>
 </html>

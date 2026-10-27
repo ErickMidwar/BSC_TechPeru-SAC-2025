@@ -8,9 +8,10 @@ backend/data/
 backend/do-install.cmd
 backend/install.js
 
-# Variables de entorno (contiene secretos — no subir a producción)
-# Dejamos .env en el repo ya que tiene solo valores de demo
-# backend/.env
+# Variables de entorno (secretos — nunca versionar)
+backend/.env
+.env
+.env.local
 
 # Logs
 *.log

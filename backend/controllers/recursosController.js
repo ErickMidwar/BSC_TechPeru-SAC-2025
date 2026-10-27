@@ -4,9 +4,9 @@ const db = require("../config/database");
 
 function newId(prefix) { return `${prefix}-${Date.now()}`; }
 
+const { audit: writeAudit } = require("../utils/audit");
 function audit(user, accion, entidad_id, detalle) {
-  db.prepare("INSERT INTO audit_log (id, usuario, accion, entidad, entidad_id, detalle) VALUES (?,?,?,?,?,?)")
-    .run(`AUD-${Date.now()}`, user || "Sistema", accion, "recursos", entidad_id, detalle);
+  writeAudit(user, accion, "recursos", entidad_id, detalle);
 }
 
 // ── RECURSOS ──────────────────────────────────────────────────────────────────

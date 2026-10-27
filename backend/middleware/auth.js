@@ -1,12 +1,21 @@
 "use strict";
 
 const jwt = require("jsonwebtoken");
+const db = require("../config/database");
+const { canEditStrategy, canMeasure, canApproveMeasurement, canAdmin } = require("../../shared/compliance");
 
-const JWT_SECRET = process.env.JWT_SECRET || "bsc_techperu_secret_2025";
+function requireJwtSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.length < 16) {
+    throw new Error(
+      "JWT_SECRET no configurado o demasiado corto. Copia backend/.env.example a backend/.env y define un secreto seguro."
+    );
+  }
+  return secret;
+}
 
 /**
- * Verifies the JWT token sent in the Authorization header.
- * Attaches the decoded payload to req.user.
+ * Verifies the JWT and re-checks that the user is still active in the DB.
  */
 function authenticate(req, res, next) {
   const header = req.headers["authorization"] || "";
@@ -17,32 +26,65 @@ function authenticate(req, res, next) {
   }
 
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    req.user = payload; // { id, email, rol, nombre }
+    const secret = requireJwtSecret();
+    const payload = jwt.verify(token, secret);
+    const user = db.prepare(
+      "SELECT id, email, rol, nombre, apellido, activo FROM users WHERE id = ?"
+    ).get(payload.id);
+
+    if (!user || !user.activo) {
+      return res.status(401).json({ error: "Usuario inactivo o no encontrado." });
+    }
+
+    req.user = {
+      id: user.id,
+      email: user.email,
+      rol: user.rol,
+      nombre: `${user.nombre} ${user.apellido}`.trim(),
+    };
     next();
   } catch (err) {
+    if (err.message && err.message.includes("JWT_SECRET")) {
+      return res.status(500).json({ error: err.message });
+    }
     return res.status(401).json({ error: "Token inválido o expirado." });
   }
 }
 
-/**
- * Requires Administrador or Gerente role.
- */
 function requireEditor(req, res, next) {
-  if (!req.user || !["Administrador", "Gerente"].includes(req.user.rol)) {
+  if (!req.user || !canEditStrategy(req.user.rol)) {
     return res.status(403).json({ error: "Acción no permitida para tu rol." });
   }
   next();
 }
 
-/**
- * Requires Administrador role only.
- */
+/** Admin, Gerente o Responsable pueden registrar/editar mediciones. */
+function requireMeasurer(req, res, next) {
+  if (!req.user || !canMeasure(req.user.rol)) {
+    return res.status(403).json({ error: "Tu rol no permite registrar mediciones." });
+  }
+  next();
+}
+
+function requireApprover(req, res, next) {
+  if (!req.user || !canApproveMeasurement(req.user.rol)) {
+    return res.status(403).json({ error: "Se requiere Gerente o Administrador para aprobar mediciones." });
+  }
+  next();
+}
+
 function requireAdmin(req, res, next) {
-  if (!req.user || req.user.rol !== "Administrador") {
+  if (!req.user || !canAdmin(req.user.rol)) {
     return res.status(403).json({ error: "Se requiere rol Administrador." });
   }
   next();
 }
 
-module.exports = { authenticate, requireEditor, requireAdmin };
+module.exports = {
+  authenticate,
+  requireEditor,
+  requireMeasurer,
+  requireApprover,
+  requireAdmin,
+  requireJwtSecret,
+};

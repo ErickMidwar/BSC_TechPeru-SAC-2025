@@ -7,9 +7,9 @@ function newId() {
   return "INI-" + String(max + 1).padStart(2, "0");
 }
 
+const { audit: writeAudit } = require("../utils/audit");
 function audit(user, accion, entidad_id, detalle) {
-  db.prepare("INSERT INTO audit_log (id, usuario, accion, entidad, entidad_id, detalle) VALUES (?,?,?,?,?,?)")
-    .run(`AUD-${Date.now()}`, user || "Sistema", accion, "iniciativas", entidad_id, detalle);
+  writeAudit(user, accion, "iniciativas", entidad_id, detalle);
 }
 
 function enrichIniciativa(ini) {

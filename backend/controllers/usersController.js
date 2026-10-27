@@ -2,11 +2,8 @@
 
 const bcrypt = require("bcryptjs");
 const db = require("../config/database");
-
-function audit(user, accion, entidad_id, detalle) {
-  db.prepare("INSERT INTO audit_log (id, usuario, accion, entidad, entidad_id, detalle) VALUES (?,?,?,?,?,?)")
-    .run(`AUD-${Date.now()}`, user || "Sistema", accion, "users", entidad_id, detalle);
-}
+const { audit } = require("../utils/audit");
+const { ROLES } = require("../utils/validate");
 
 // GET /api/users
 exports.list = (req, res) => {
@@ -16,8 +13,12 @@ exports.list = (req, res) => {
   return res.json(rows);
 };
 
-// GET /api/users/:id
+// GET /api/users/:id — admin or self
 exports.getOne = (req, res) => {
+  const isSelf = req.user.id === req.params.id;
+  const isAdmin = req.user.rol === "Administrador";
+  if (!isSelf && !isAdmin) return res.status(403).json({ error: "No autorizado." });
+
   const row = db.prepare(
     "SELECT id, nombre, apellido, email, rol, area, activo, created_at FROM users WHERE id = ?"
   ).get(req.params.id);
@@ -42,15 +43,23 @@ exports.update = (req, res) => {
   if (nombre    !== undefined) { fields.push("nombre = ?");    params.push(nombre.trim()); }
   if (apellido  !== undefined) { fields.push("apellido = ?");  params.push(apellido.trim()); }
   if (area      !== undefined) { fields.push("area = ?");      params.push(area); }
-  if (isAdmin && rol !== undefined) { fields.push("rol = ?"); params.push(rol); }
+  if (isAdmin && rol !== undefined) {
+    if (!ROLES.includes(rol)) return res.status(400).json({ error: "Rol inválido." });
+    fields.push("rol = ?");
+    params.push(rol);
+  }
   if (isAdmin && activo !== undefined) { fields.push("activo = ?"); params.push(activo ? 1 : 0); }
-  if (password) { fields.push("password = ?"); params.push(bcrypt.hashSync(password, 10)); }
+  if (password) {
+    if (String(password).length < 6) return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres." });
+    fields.push("password = ?");
+    params.push(bcrypt.hashSync(password, 10));
+  }
 
   if (fields.length === 0) return res.status(400).json({ error: "Nada para actualizar." });
   params.push(req.params.id);
   db.prepare(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`).run(...params);
 
-  audit(req.user?.nombre, "Edición", req.params.id, `Usuario ${req.params.id} actualizado.`);
+  audit(req.user?.nombre, "Edición", "users", req.params.id, `Usuario ${req.params.id} actualizado.`);
   return res.json(db.prepare("SELECT id, nombre, apellido, email, rol, area, activo FROM users WHERE id = ?").get(req.params.id));
 };
 
@@ -63,6 +72,6 @@ exports.remove = (req, res) => {
   if (!row) return res.status(404).json({ error: "Usuario no encontrado." });
 
   db.prepare("UPDATE users SET activo = 0 WHERE id = ?").run(req.params.id);
-  audit(req.user?.nombre, "Baja", req.params.id, `Usuario ${row.email} desactivado.`);
+  audit(req.user?.nombre, "Baja", "users", req.params.id, `Usuario ${row.email} desactivado.`);
   return res.json({ message: "Usuario desactivado." });
 };

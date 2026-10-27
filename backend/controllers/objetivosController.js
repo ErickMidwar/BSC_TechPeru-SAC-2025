@@ -1,35 +1,43 @@
 "use strict";
 
 const db = require("../config/database");
-
-function newId() {
-  const max = db.prepare("SELECT MAX(CAST(SUBSTR(id,5) AS INTEGER)) as m FROM objetivos").get().m || 0;
-  return "OBJ-" + String(max + 1).padStart(2, "0");
-}
-
-function audit(user, accion, entidad_id, detalle) {
-  db.prepare("INSERT INTO audit_log (id, usuario, accion, entidad, entidad_id, detalle) VALUES (?,?,?,?,?,?)")
-    .run(`AUD-${Date.now()}`, user || "Sistema", accion, "objetivos", entidad_id, detalle);
-}
+const { audit } = require("../utils/audit");
+const { newId } = require("../utils/ids");
+const { parse, objetivoSchema } = require("../utils/validate");
+const { achievement, semaforo } = require("../../shared/compliance");
 
 function enrichObjetivo(obj) {
   if (!obj) return null;
-  const kpis = db.prepare("SELECT id, nombre, resultado_actual, meta, direccion, umbral_alerta, umbral_critico, peso FROM kpis WHERE objetivo_id = ?").all(obj.id);
+  const kpis = db.prepare(
+    "SELECT id, nombre, resultado_actual, meta, direccion, umbral_alerta, umbral_critico, peso FROM kpis WHERE objetivo_id = ?"
+  ).all(obj.id).map((k) => {
+    const pct = achievement(k, k.resultado_actual);
+    return { ...k, cumplimiento: pct, estado_semaforo: semaforo(k, pct) };
+  });
   const trabajador = obj.trabajador_id
     ? db.prepare("SELECT id, nombre, apellido, cargo, area FROM trabajadores WHERE id = ?").get(obj.trabajador_id)
     : null;
-  return { ...obj, kpis, trabajador };
+  const causas = db.prepare(`
+    SELECT r.id, r.from_id as id_objetivo, o.nombre, o.perspectiva, r.descripcion
+    FROM objetivo_relaciones r JOIN objetivos o ON o.id = r.from_id
+    WHERE r.to_id = ?
+  `).all(obj.id);
+  const efectos = db.prepare(`
+    SELECT r.id, r.to_id as id_objetivo, o.nombre, o.perspectiva, r.descripcion
+    FROM objetivo_relaciones r JOIN objetivos o ON o.id = r.to_id
+    WHERE r.from_id = ?
+  `).all(obj.id);
+  return { ...obj, kpis, trabajador, causas, efectos };
 }
 
-// GET /api/objetivos
 exports.list = (req, res) => {
   const { perspectiva, estado, prioridad, q } = req.query;
   let sql = "SELECT * FROM objetivos WHERE 1=1";
   const params = [];
 
   if (perspectiva) { sql += " AND perspectiva = ?"; params.push(perspectiva); }
-  if (estado)      { sql += " AND estado = ?";      params.push(estado); }
-  if (prioridad)   { sql += " AND prioridad = ?";   params.push(prioridad); }
+  if (estado) { sql += " AND estado = ?"; params.push(estado); }
+  if (prioridad) { sql += " AND prioridad = ?"; params.push(prioridad); }
   if (q) {
     sql += " AND (nombre LIKE ? OR descripcion LIKE ? OR responsable LIKE ?)";
     const like = `%${q}%`;
@@ -37,43 +45,49 @@ exports.list = (req, res) => {
   }
   sql += " ORDER BY perspectiva, id";
 
-  const rows = db.prepare(sql).all(...params).map(o => {
+  const rows = db.prepare(sql).all(...params).map((o) => {
     const kpis = db.prepare("SELECT id FROM kpis WHERE objetivo_id = ?").all(o.id);
     return { ...o, kpi_count: kpis.length };
   });
   return res.json(rows);
 };
 
-// GET /api/objetivos/:id
+exports.relaciones = (_req, res) => {
+  const rows = db.prepare(`
+    SELECT r.*, o1.nombre as from_nombre, o1.perspectiva as from_perspectiva,
+           o2.nombre as to_nombre, o2.perspectiva as to_perspectiva
+    FROM objetivo_relaciones r
+    JOIN objetivos o1 ON o1.id = r.from_id
+    JOIN objetivos o2 ON o2.id = r.to_id
+  `).all();
+  return res.json(rows);
+};
+
 exports.getOne = (req, res) => {
   const row = db.prepare("SELECT * FROM objetivos WHERE id = ?").get(req.params.id);
   if (!row) return res.status(404).json({ error: "Objetivo no encontrado." });
   return res.json(enrichObjetivo(row));
 };
 
-// POST /api/objetivos
 exports.create = (req, res) => {
-  const {
-    nombre, perspectiva, descripcion = "", responsable = "",
-    trabajador_id = null, prioridad = "Media", peso = 100, estado = "Activo"
-  } = req.body || {};
+  try {
+    const data = parse(objetivoSchema, req.body || {});
+    const id = newId("obj");
+    db.prepare(`
+      INSERT INTO objetivos (id, nombre, perspectiva, descripcion, responsable, trabajador_id, prioridad, peso, estado)
+      VALUES (?,?,?,?,?,?,?,?,?)
+    `).run(
+      id, data.nombre.trim(), data.perspectiva, data.descripcion, data.responsable,
+      data.trabajador_id || null, data.prioridad, Number(data.peso), data.estado
+    );
 
-  if (!nombre || !perspectiva) return res.status(400).json({ error: "nombre y perspectiva son requeridos." });
-  const validPers = ["financiera", "clientes", "procesos", "aprendizaje"];
-  if (!validPers.includes(perspectiva)) return res.status(400).json({ error: "Perspectiva inválida." });
-
-  const id = newId();
-  db.prepare(`
-    INSERT INTO objetivos (id, nombre, perspectiva, descripcion, responsable, trabajador_id, prioridad, peso, estado)
-    VALUES (?,?,?,?,?,?,?,?,?)
-  `).run(id, nombre.trim(), perspectiva, descripcion, responsable, trabajador_id || null,
-         prioridad, Number(peso), estado);
-
-  audit(req.user?.nombre, "Creación", id, `Objetivo ${id}: ${nombre}`);
-  return res.status(201).json(enrichObjetivo(db.prepare("SELECT * FROM objetivos WHERE id = ?").get(id)));
+    audit(req.user?.nombre, "Creación", "objetivos", id, `Objetivo ${id}: ${data.nombre}`);
+    return res.status(201).json(enrichObjetivo(db.prepare("SELECT * FROM objetivos WHERE id = ?").get(id)));
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message });
+  }
 };
 
-// PUT /api/objetivos/:id
 exports.update = (req, res) => {
   const row = db.prepare("SELECT * FROM objetivos WHERE id = ?").get(req.params.id);
   if (!row) return res.status(404).json({ error: "Objetivo no encontrado." });
@@ -97,11 +111,10 @@ exports.update = (req, res) => {
     req.params.id
   );
 
-  audit(req.user?.nombre, "Edición", req.params.id, `Objetivo ${req.params.id} actualizado.`);
+  audit(req.user?.nombre, "Edición", "objetivos", req.params.id, `Objetivo ${req.params.id} actualizado.`);
   return res.json(enrichObjetivo(db.prepare("SELECT * FROM objetivos WHERE id = ?").get(req.params.id)));
 };
 
-// DELETE /api/objetivos/:id
 exports.remove = (req, res) => {
   const row = db.prepare("SELECT * FROM objetivos WHERE id = ?").get(req.params.id);
   if (!row) return res.status(404).json({ error: "Objetivo no encontrado." });
@@ -112,6 +125,6 @@ exports.remove = (req, res) => {
   }
 
   db.prepare("DELETE FROM objetivos WHERE id = ?").run(req.params.id);
-  audit(req.user?.nombre, "Eliminación", req.params.id, `Objetivo ${row.nombre} eliminado.`);
+  audit(req.user?.nombre, "Eliminación", "objetivos", req.params.id, `Objetivo ${row.nombre} eliminado.`);
   return res.json({ message: "Objetivo eliminado." });
 };

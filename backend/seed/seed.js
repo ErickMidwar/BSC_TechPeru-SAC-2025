@@ -25,10 +25,11 @@ function run(msg, fn) {
 }
 
 // ── check if already seeded ───────────────────────────────────────────────────
+function seed() {
 const alreadySeeded = db.prepare("SELECT COUNT(*) as c FROM users").get().c > 0;
 if (alreadySeeded) {
   console.log("La base de datos ya contiene datos. Seed omitido.");
-  process.exit(0);
+  return { skipped: true };
 }
 
 console.log("\n🌱  Iniciando seed de datos para BSC TechPeru SAC...\n");
@@ -112,6 +113,33 @@ run("Objetivos estratégicos (12)", () => {
   insertMany(seedObjetivos);
 });
 
+// ── 3b. RELACIONES CAUSA-EFECTO ───────────────────────────────────────────────
+const insertRel = db.prepare(`
+  INSERT INTO objetivo_relaciones (id, from_id, to_id, descripcion)
+  VALUES (@id, @from_id, @to_id, @descripcion)
+`);
+
+const seedRelaciones = [
+  { id: "REL-01", from_id: "OBJ-10", to_id: "OBJ-07", descripcion: "Competencias → eficiencia operativa" },
+  { id: "REL-02", from_id: "OBJ-11", to_id: "OBJ-08", descripcion: "Mejora continua → calidad" },
+  { id: "REL-03", from_id: "OBJ-12", to_id: "OBJ-07", descripcion: "Datos oportunos → eficiencia" },
+  { id: "REL-04", from_id: "OBJ-07", to_id: "OBJ-04", descripcion: "Eficiencia → satisfacción" },
+  { id: "REL-05", from_id: "OBJ-08", to_id: "OBJ-04", descripcion: "Calidad → satisfacción" },
+  { id: "REL-06", from_id: "OBJ-09", to_id: "OBJ-04", descripcion: "Abastecimiento → satisfacción" },
+  { id: "REL-07", from_id: "OBJ-04", to_id: "OBJ-05", descripcion: "Satisfacción → fidelidad" },
+  { id: "REL-08", from_id: "OBJ-05", to_id: "OBJ-03", descripcion: "Fidelidad → ingresos" },
+  { id: "REL-09", from_id: "OBJ-06", to_id: "OBJ-03", descripcion: "Participación → ingresos" },
+  { id: "REL-10", from_id: "OBJ-03", to_id: "OBJ-01", descripcion: "Ingresos → rentabilidad" },
+  { id: "REL-11", from_id: "OBJ-02", to_id: "OBJ-01", descripcion: "Costos → rentabilidad" },
+];
+
+run("Relaciones causa-efecto (11)", () => {
+  const insertMany = db.transaction((rows) => {
+    for (const r of rows) insertRel.run(r);
+  });
+  insertMany(seedRelaciones);
+});
+
 // ── 4. KPIs ──────────────────────────────────────────────────────────────────
 const insertKpi = db.prepare(`
   INSERT INTO kpis (id, nombre, perspectiva, objetivo_id, unidad, formula, descripcion,
@@ -152,8 +180,8 @@ run("KPIs (16)", () => {
 
 // ── 5. MEDICIONES (últimos 6 meses simulados) ─────────────────────────────────
 const insertMedicion = db.prepare(`
-  INSERT INTO mediciones (id, kpi_id, periodo, fecha, valor, responsable, notas)
-  VALUES (@id, @kpi_id, @periodo, @fecha, @valor, @responsable, @notas)
+  INSERT INTO mediciones (id, kpi_id, periodo, fecha, valor, responsable, notas, estado)
+  VALUES (@id, @kpi_id, @periodo, @fecha, @valor, @responsable, @notas, @estado)
 `);
 
 run("Mediciones históricas (6 meses × 15 KPI con datos)", () => {
@@ -187,6 +215,7 @@ run("Mediciones históricas (6 meses × 15 KPI con datos)", () => {
           valor: v,
           responsable: kpi.responsable,
           notas: idx === 5 ? "Cierre de período de demostración" : "Medición histórica simulada",
+          estado: "aprobado",
         });
       });
     }
@@ -281,3 +310,8 @@ run("Registro de auditoría inicial", () => {
 });
 
 console.log("\n✅  Seed completado exitosamente.\n");
+return { skipped: false };
+}
+
+const result = seed();
+module.exports = result || { skipped: false };
